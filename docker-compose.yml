@@ -1,0 +1,18 @@
+version: '3.9'
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: appostrophe_case_db_1
+    environment:
+      POSTGRES_DB: appostrophe
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "6543:5432"
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d appostrophe"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

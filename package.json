@@ -1,0 +1,15 @@
+{
+  "name": "appostrophe-backend-case-study",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start-case-study": "node scripts/start-case-study.js",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down -v"
+  },
+  "dependencies": {
+    "debug": "~2.6.9",
+    "express": "~4.16.1",
+    "pg": "^8.11.5"
+  }
+}
