@@ -166,7 +166,7 @@ app.post('/update-template', async function(req, res) {
   }
 });
 
-app.get('/delete-template', async function(req, res) {
+app.delete('/delete-template', async function(req, res) {
   requestCount++;
   var templateId = parseInt(req.query.id, 10);
   if (!Number.isInteger(templateId) || templateId <= 0) {
