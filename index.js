@@ -58,7 +58,10 @@ app.get('/get-templates', async function(req, res) {
 
 app.get('/get-template', async function(req, res) {
   requestCount++;
-  var templateId = req.query.id;
+  var templateId = parseInt(req.query.id, 10);
+  if (!Number.isInteger(templateId) || templateId <= 0) {
+    return res.status(400).json({ ok: false, error: 'Invalid id' });
+  }
   try {
     var template = await client.query('SELECT * FROM templates WHERE id = $1', [templateId ]);
     if (template.rows.length > 0) {
@@ -81,10 +84,23 @@ app.get('/get-template', async function(req, res) {
 app.post('/create-template', async function(req, res) {
   requestCount++;
   var data = req.body;
+  var id = parseInt(data.id, 10);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ ok: false, error: 'id must be a positive integer' });
+  }
+  if (!data.title || typeof data.title !== 'string' || !data.title.trim()) {
+    return res.status(400).json({ ok: false, error: 'title must be a non-empty string' });
+  }
+  if (data.source === undefined || data.source === null) {
+    return res.status(400).json({ ok: false, error: 'source is required' });
+  }
+  if (data.order_index !== undefined && (!Number.isInteger(Number(data.order_index)) || isNaN(Number(data.order_index)))) {
+    return res.status(400).json({ ok: false, error: 'order_index must be an integer' });
+  }
   try {
     var insertResult = await client.query(
       'INSERT INTO templates (id, title, source, order_index) VALUES ($1, $2, $3, $4)',
-      [data.id, data.title, JSON.stringify(data.source), data.order_index || 0]
+      [id, data.title.trim(), JSON.stringify(data.source), data.order_index !== undefined ? Number(data.order_index) : 0]
     );
     
     if (data.categories && Array.isArray(data.categories)) {
@@ -94,13 +110,13 @@ app.post('/create-template', async function(req, res) {
         if (catResult.rows.length > 0) {
           await client.query(
             'INSERT INTO template_categories (template_id, category_id) VALUES ($1, $2)',
-            [data.id, catResult.rows[0].id]
+            [id, catResult.rows[0].id]
           );
         }
       }
     }
     
-    res.json({ success: true, id: data.id });
+    res.json({ success: true, id: id });
   } catch (e) {
     res.status(500).json({ success: false, error: e.message, code: e.code });
   }
@@ -109,25 +125,34 @@ app.post('/create-template', async function(req, res) {
 app.post('/update-template', async function(req, res) {
   requestCount++;
   var updates = req.body;
-  var templateId = updates.id;
+  var templateId = parseInt(updates.id, 10);
+  if (!Number.isInteger(templateId) || templateId <= 0) {
+    return res.status(400).json({ ok: false, error: 'id must be a positive integer' });
+  }
+  if (updates.title !== undefined && (typeof updates.title !== 'string' || !updates.title.trim())) {
+    return res.status(400).json({ ok: false, error: 'title must be a non-empty string' });
+  }
+  if (updates.order_index !== undefined && (!Number.isInteger(Number(updates.order_index)) || isNaN(Number(updates.order_index)))) {
+    return res.status(400).json({ ok: false, error: 'order_index must be an integer' });
+  }
   try {
     var query = 'UPDATE templates SET ';
     var values = [];
     var paramCount = 1;
-    
-    if (updates.title) {
+
+    if (updates.title !== undefined) {
       query += `title = $${paramCount}, `;
-      values.push(updates.title);
+      values.push(updates.title.trim());
       paramCount++;
     }
-    if (updates.source) {
+    if (updates.source !== undefined) {
       query += `source = $${paramCount}, `;
       values.push(JSON.stringify(updates.source));
       paramCount++;
     }
     if (updates.order_index !== undefined) {
       query += `order_index = $${paramCount}, `;
-      values.push(updates.order_index);
+      values.push(Number(updates.order_index));
       paramCount++;
     }
     
@@ -168,6 +193,9 @@ app.get('/get-template-categories', async function(req, res) {
 app.post('/create-template-category', async function(req, res) {
   requestCount++;
   var slug = req.body.slug;
+  if (!slug || typeof slug !== 'string' || !/^[a-z0-9-]+$/.test(slug)) {
+    return res.status(400).json({ ok: false, error: 'slug must be a non-empty lowercase alphanumeric string (hyphens allowed)' });
+  }
   try {
     var result = await client.query('INSERT INTO categories (slug) VALUES ($1) RETURNING id', [slug]);
     res.json({ id: result.rows[0].id, slug: slug });
