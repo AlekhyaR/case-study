@@ -1,16 +1,15 @@
 var express = require('express');
 var http = require('http');
 var debug = require('debug')('appostrophe-backend-case-study:server');
-var { Client } = require('pg');
+var { Pool } = require('pg');
 
-var client = new Client({
+var client = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: +(process.env.DB_PORT || 6543),
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASS || 'postgres',
   database: process.env.DB_NAME || 'appostrophe',
 });
-client.connect();
 
 var app = express();
 
