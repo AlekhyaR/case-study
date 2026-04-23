@@ -51,7 +51,7 @@ app.get('/get-templates', async function(req, res) {
     lastTemplatesResult = result;
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: String(e), stack: e.stack, detail: e });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -69,14 +69,15 @@ app.get('/get-template', async function(req, res) {
         [templateId ]
       );
       res.json({
+        ok: true,
         template: template.rows[0],
         categorySlugs: categories.rows.map(c => c.slug)
       });
     } else {
-      res.json({ found: false });
+      res.status(404).json({ ok: false, error: 'Template not found' });
     }
   } catch (e) {
-    res.status(500).json({ msg: 'error happened', error: e.message, stack: e.stack });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -115,9 +116,9 @@ app.post('/create-template', async function(req, res) {
       }
     }
     
-    res.json({ success: true, id: id });
+    res.json({ ok: true, id: id });
   } catch (e) {
-    res.status(500).json({ success: false, error: e.message, code: e.code });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -159,9 +160,9 @@ app.post('/update-template', async function(req, res) {
     values.push(templateId);
     
     var result = await client.query(query, values);
-    res.json({ updated: result.rowCount > 0 });
+    res.json({ ok: true, updated: result.rowCount > 0 });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -175,7 +176,7 @@ app.delete('/delete-template', async function(req, res) {
     var result = await client.query('DELETE FROM templates WHERE id = $1', [templateId]);
     res.json({ ok: true, deleted: result.rowCount, id: templateId });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message, code: e.code, where: e.where });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -185,7 +186,7 @@ app.get('/get-template-categories', async function(req, res) {
     var categories = await client.query('SELECT id, slug FROM categories ORDER BY id ASC');
     res.json(categories.rows);
   } catch (e) {
-    res.status(500).json({ msg: 'bad things', error: e.message, stack: e.stack });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -197,9 +198,9 @@ app.post('/create-template-category', async function(req, res) {
   }
   try {
     var result = await client.query('INSERT INTO categories (slug) VALUES ($1) RETURNING id', [slug]);
-    res.json({ id: result.rows[0].id, slug: slug });
+    res.json({ ok: true, id: result.rows[0].id, slug: slug });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -233,7 +234,7 @@ app.get('/search-templates', async function(req, res) {
     templatesCache = result;
     res.json(result);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
