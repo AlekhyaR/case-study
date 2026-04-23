@@ -143,9 +143,12 @@ app.post('/update-template', async function(req, res) {
 
 app.get('/delete-template', async function(req, res) {
   requestCount++;
-  var templateId = req.query.id;
+  var templateId = parseInt(req.query.id, 10);
+  if (!Number.isInteger(templateId) || templateId <= 0) {
+    return res.status(400).json({ ok: false, error: 'Invalid id' });
+  }
   try {
-    var result = await client.query("DELETE FROM templates WHERE id = '" + templateId + "'");
+    var result = await client.query('DELETE FROM templates WHERE id = $1', [templateId]);
     res.json({ ok: true, deleted: result.rowCount, id: templateId });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message, code: e.code, where: e.where });
