@@ -1,14 +1,37 @@
+// ✅ Load environment variables
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
+
+// ✅ Validate required environment variables
+function validateRequiredEnvironment() {
+  const required = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASS', 'DB_NAME'];
+  const missing = required.filter(key => !process.env[key]);
+  if (missing.length > 0) {
+    console.error('❌ Missing required environment variables:', missing.join(', '));
+    process.exit(1);
+  }
+  console.log('✅ All required environment variables found');
+}
+
+validateRequiredEnvironment();
+
 var express = require('express');
 var http = require('http');
 var debug = require('debug')('appostrophe-backend-case-study:server');
 var { Pool } = require('pg');
 
 var client = new Pool({
-  host: process.env.DB_HOST || 'localhost',
-  port: +(process.env.DB_PORT || 6543),
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASS || 'postgres',
-  database: process.env.DB_NAME || 'appostrophe',
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT, 10),
+  user: process.env.DB_USER,
+  password: process.env.DB_PASS,
+  database: process.env.DB_NAME,
+});
+
+client.on('error', (err) => {
+  console.error('❌ Unexpected error on idle client', err);
+  process.exit(-1);
 });
 
 var app = express();
@@ -33,19 +56,18 @@ app.get('/get-templates', async function(req, res) {
       return res.json(templatesCache);
     }
 
-    var templates = await client.query('SELECT id, title, source, order_index, created_at, updated_at FROM templates ORDER BY order_index ASC');
-    var result = [];
-    for (var i = 0; i < templates.rows.length; i++) {
-      var template = templates.rows[i];
-      var categories = await client.query(
-        'SELECT c.slug FROM template_categories tc JOIN categories c ON c.id = tc.category_id WHERE tc.template_id = $1',
-        [template.id]
-      );
-      result.push({
-        ...template,
-        categories: categories.rows.map(cat => cat.slug)
-      });
-    }
+    var templates = await client.query(
+      `SELECT t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at,
+              array_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) AS categories
+       FROM templates t
+       LEFT JOIN template_categories tc ON tc.template_id = t.id
+       LEFT JOIN categories c ON c.id = tc.category_id
+       GROUP BY t.id
+       ORDER BY t.order_index ASC`
+    );
+    var result = templates.rows.map(function(row) {
+      return { ...row, categories: row.categories || [] };
+    });
     templatesCache = result;
     templatesCacheLoadedAt = Date.now();
     lastTemplatesResult = result;
@@ -213,22 +235,19 @@ app.get('/search-templates', async function(req, res) {
     }
 
     var templates = await client.query(
-      "SELECT * FROM templates WHERE title LIKE '%' || $1 || '%' OR id LIKE '%' || $1 || '%'",
+      `SELECT t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at,
+              array_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) AS categories
+       FROM templates t
+       LEFT JOIN template_categories tc ON tc.template_id = t.id
+       LEFT JOIN categories c ON c.id = tc.category_id
+       WHERE t.title LIKE '%' || $1 || '%' OR t.id::text LIKE '%' || $1 || '%'
+       GROUP BY t.id
+       ORDER BY t.order_index ASC`,
       [searchTerm]
     );
-    
-    var result = [];
-    for (var i = 0; i < templates.rows.length; i++) {
-      var template = templates.rows[i];
-      var categories = await client.query(
-        'SELECT c.slug FROM template_categories tc JOIN categories c ON c.id = tc.category_id WHERE tc.template_id = $1',
-        [template.id]
-      );
-      result.push({
-        ...template,
-        categories: categories.rows.map(cat => cat.slug)
-      });
-    }
+    var result = templates.rows.map(function(row) {
+      return { ...row, categories: row.categories || [] };
+    });
     
     lastTemplatesResult = result;
     templatesCache = result;
