@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "start-case-study": "node scripts/start-case-study.js",
+    "start": "node src/index.js",
+    "start-dev": "NODE_ENV=development node src/index.js",
+    "start-case-study": "NODE_ENV=development node src/index.js",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down -v"
   },
@@ -11,6 +13,7 @@
     "debug": "~2.6.9",
     "dotenv": "^17.4.2",
     "express": "~4.16.1",
+    "jsonwebtoken": "^9.0.3",
     "pg": "^8.11.5"
   }
 }
