@@ -2,36 +2,36 @@
 const { client } = require('../config/database');
 const { queryWithRetry } = require('../utils/database');
 
-// SINGLE SOURCE OF TRUTH - No duplication!
 const TEMPLATE_QUERY = `
-  SELECT 
+  SELECT
     t.id,
     t.title,
     t.source,
     t.order_index,
     t.created_at,
     t.updated_at,
-    json_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) as categories
+    json_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) as categories,
+    COUNT(*) OVER() as total_count
   FROM templates t
   LEFT JOIN template_categories tc ON t.id = tc.template_id
   LEFT JOIN categories c ON c.id = tc.category_id
 `;
 
-async function getAllTemplates() {
-  const result = await queryWithRetry(() =>
+async function getAllTemplates(limit = 50, offset = 0) {
+  return queryWithRetry(() =>
     client.query(
       TEMPLATE_QUERY + `
       GROUP BY t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at
       ORDER BY t.order_index ASC
-      `
+      LIMIT $1 OFFSET $2
+      `,
+      [limit, offset]
     )
   );
-  
-  return result;
 }
 
 async function getTemplateById(id) {
-  const result = await queryWithRetry(() =>
+  return queryWithRetry(() =>
     client.query(
       TEMPLATE_QUERY + `
       WHERE t.id = $1
@@ -40,8 +40,6 @@ async function getTemplateById(id) {
       [id]
     )
   );
-  
-  return result;
 }
 
 async function createTemplate(id, title, source, order_index, categories) {
@@ -51,13 +49,13 @@ async function createTemplate(id, title, source, order_index, categories) {
       [id, title, JSON.stringify(source), order_index || 0]
     )
   );
-  
+
   if (categories && Array.isArray(categories)) {
     for (const catSlug of categories) {
       const catResult = await queryWithRetry(() =>
         client.query('SELECT id FROM categories WHERE slug = $1', [catSlug])
       );
-      
+
       if (catResult.rows.length > 0) {
         await queryWithRetry(() =>
           client.query(
@@ -80,22 +78,22 @@ async function updateTemplate(id, updates) {
     values.push(updates.title);
     paramCount++;
   }
-  
+
   if (updates.source !== undefined) {
     query += `source = $${paramCount}, `;
     values.push(JSON.stringify(updates.source));
     paramCount++;
   }
-  
+
   if (updates.order_index !== undefined) {
     query += `order_index = $${paramCount}, `;
     values.push(updates.order_index);
     paramCount++;
   }
-  
+
   query += `updated_at = now() WHERE id = $${paramCount}`;
   values.push(id);
-  
+
   return queryWithRetry(() => client.query(query, values));
 }
 
@@ -105,19 +103,18 @@ async function deleteTemplate(id) {
   );
 }
 
-async function searchTemplates(searchTerm) {
-  const result = await queryWithRetry(() =>
+async function searchTemplates(searchTerm, limit = 50, offset = 0) {
+  return queryWithRetry(() =>
     client.query(
       TEMPLATE_QUERY + `
       WHERE t.title ILIKE '%' || $1 || '%' OR t.id::TEXT ILIKE '%' || $1 || '%'
       GROUP BY t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at
       ORDER BY t.order_index ASC
+      LIMIT $2 OFFSET $3
       `,
-      [searchTerm]
+      [searchTerm, limit, offset]
     )
   );
-  
-  return result;
 }
 
 module.exports = {
