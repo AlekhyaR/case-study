@@ -19,11 +19,16 @@ const templateRoutes = require('./routes/template');
 const categoryRoutes = require('./routes/categories');
 const healthCheck = require('./routes/health');
 
+// API docs
+const swaggerUi = require('swagger-ui-express');
+const swaggerDocument = require('./docs/swagger');
+
 // Setup express
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLoggerMiddleware);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // Register routes
 app.use('/auth', authRoutes);

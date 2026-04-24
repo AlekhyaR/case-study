@@ -1,4 +1,3 @@
-// src/routes/categories.js
 const express = require('express');
 const router = express.Router();
 const categoryService = require('../services/categoryService');
