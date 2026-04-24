@@ -5,15 +5,16 @@ const templateService = require('../services/templateService');
 const { authenticateToken } = require('../middleware/auth');
 const { handleError } = require('../utils/error');
 const { isCacheValid, getCache, setCache, invalidateCache } = require('../services/cacheService');
+const { validateBody, validateQuery } = require('../validation/validate');
+const {
+  IdQuerySchema,
+  PaginationSchema,
+  CreateTemplateBodySchema,
+  UpdateTemplateBodySchema,
+  SearchQuerySchema
+} = require('../validation/schemas');
 
 const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 100;
-
-function parsePagination(query) {
-  const limit = Math.min(Math.max(parseInt(query.limit, 10) || DEFAULT_LIMIT, 1), MAX_LIMIT);
-  const page = Math.max(parseInt(query.page, 10) || 1, 1);
-  return { limit, page, offset: (page - 1) * limit };
-}
 
 function mapTemplate(row) {
   const { total_count, ...template } = row;
@@ -21,10 +22,11 @@ function mapTemplate(row) {
 }
 
 // GET all templates
-router.get('/get-templates', authenticateToken, async (req, res) => {
+router.get('/get-templates', authenticateToken, validateQuery(PaginationSchema), async (req, res) => {
   try {
-    const { limit, page, offset } = parsePagination(req.query);
-    const useCache = !req.query.page && !req.query.limit;
+    const { page, limit } = req.query;
+    const offset = (page - 1) * limit;
+    const useCache = page === 1 && limit === DEFAULT_LIMIT;
 
     if (useCache && isCacheValid()) {
       const cached = getCache();
@@ -40,9 +42,7 @@ router.get('/get-templates', authenticateToken, async (req, res) => {
     const total = parseInt(result.rows[0]?.total_count || 0, 10);
     const data = result.rows.map(mapTemplate);
 
-    if (useCache) {
-      setCache({ data, total });
-    }
+    if (useCache) setCache({ data, total });
 
     res.json({
       ok: true,
@@ -56,19 +56,9 @@ router.get('/get-templates', authenticateToken, async (req, res) => {
 });
 
 // GET single template
-router.get('/get-template', authenticateToken, async (req, res) => {
+router.get('/get-template', authenticateToken, validateQuery(IdQuerySchema), async (req, res) => {
   try {
-    const templateId = parseInt(req.query.id, 10);
-
-    if (!Number.isInteger(templateId) || templateId <= 0) {
-      return res.status(400).json({
-        ok: false,
-        error: 'id must be a positive integer',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const result = await templateService.getTemplateById(templateId);
+    const result = await templateService.getTemplateById(req.query.id);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -89,37 +79,11 @@ router.get('/get-template', authenticateToken, async (req, res) => {
 });
 
 // CREATE template
-router.post('/create-template', authenticateToken, async (req, res) => {
+router.post('/create-template', authenticateToken, validateBody(CreateTemplateBodySchema), async (req, res) => {
   try {
     const { id, title, source, order_index, categories } = req.body;
-
-    if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({
-        ok: false,
-        error: 'id must be a positive integer',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (!title || typeof title !== 'string' || !title.trim()) {
-      return res.status(400).json({
-        ok: false,
-        error: 'title must be a non-empty string',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (source === undefined || source === null) {
-      return res.status(400).json({
-        ok: false,
-        error: 'source is required',
-        timestamp: new Date().toISOString()
-      });
-    }
-
     await templateService.createTemplate(id, title, source, order_index, categories);
     invalidateCache();
-
     res.status(201).json({
       ok: true,
       data: { id },
@@ -131,21 +95,11 @@ router.post('/create-template', authenticateToken, async (req, res) => {
 });
 
 // UPDATE template
-router.post('/update-template', authenticateToken, async (req, res) => {
+router.post('/update-template', authenticateToken, validateBody(UpdateTemplateBodySchema), async (req, res) => {
   try {
     const { id, ...updates } = req.body;
-
-    if (!Number.isInteger(id) || id <= 0) {
-      return res.status(400).json({
-        ok: false,
-        error: 'id must be a positive integer',
-        timestamp: new Date().toISOString()
-      });
-    }
-
     const result = await templateService.updateTemplate(id, updates);
     invalidateCache();
-
     res.json({
       ok: true,
       data: { updated: result.rowCount > 0 },
@@ -157,24 +111,13 @@ router.post('/update-template', authenticateToken, async (req, res) => {
 });
 
 // DELETE template
-router.delete('/delete-template', authenticateToken, async (req, res) => {
+router.delete('/delete-template', authenticateToken, validateQuery(IdQuerySchema), async (req, res) => {
   try {
-    const templateId = parseInt(req.query.id, 10);
-
-    if (!Number.isInteger(templateId) || templateId <= 0) {
-      return res.status(400).json({
-        ok: false,
-        error: 'Invalid id',
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    const result = await templateService.deleteTemplate(templateId);
+    const result = await templateService.deleteTemplate(req.query.id);
     invalidateCache();
-
     res.json({
       ok: true,
-      data: { deleted: result.rowCount, id: templateId },
+      data: { deleted: result.rowCount, id: req.query.id },
       timestamp: new Date().toISOString()
     });
   } catch (e) {
@@ -183,12 +126,12 @@ router.delete('/delete-template', authenticateToken, async (req, res) => {
 });
 
 // SEARCH templates
-router.get('/search-templates', authenticateToken, async (req, res) => {
+router.get('/search-templates', authenticateToken, validateQuery(SearchQuerySchema), async (req, res) => {
   try {
-    const searchTerm = req.query.q || '';
-    const { limit, page, offset } = parsePagination(req.query);
+    const { q, page, limit } = req.query;
+    const offset = (page - 1) * limit;
 
-    const result = await templateService.searchTemplates(searchTerm, limit, offset);
+    const result = await templateService.searchTemplates(q, limit, offset);
     const total = parseInt(result.rows[0]?.total_count || 0, 10);
     const data = result.rows.map(mapTemplate);
 

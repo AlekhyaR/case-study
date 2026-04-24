@@ -4,12 +4,13 @@ const categoryService = require('../services/categoryService');
 const { authenticateToken } = require('../middleware/auth');
 const { handleError } = require('../utils/error');
 const { invalidateCache } = require('../services/cacheService');
+const { validateBody } = require('../validation/validate');
+const { CreateCategoryBodySchema } = require('../validation/schemas');
 
 // GET all categories
 router.get('/get-template-categories', authenticateToken, async (req, res) => {
   try {
     const result = await categoryService.getAllCategories();
-    
     res.json({
       ok: true,
       data: result.rows,
@@ -21,27 +22,13 @@ router.get('/get-template-categories', authenticateToken, async (req, res) => {
 });
 
 // CREATE category
-router.post('/create-template-category', authenticateToken, async (req, res) => {
+router.post('/create-template-category', authenticateToken, validateBody(CreateCategoryBodySchema), async (req, res) => {
   try {
-    const { slug } = req.body;
-    
-    if (!slug || typeof slug !== 'string' || !/^[a-z0-9-]+$/.test(slug)) {
-      return res.status(400).json({
-        ok: false,
-        error: 'slug must be a non-empty lowercase alphanumeric string (hyphens allowed)',
-        timestamp: new Date().toISOString()
-      });
-    }
-    
-    const result = await categoryService.createCategory(slug);
+    const result = await categoryService.createCategory(req.body.slug);
     invalidateCache();
-    
     res.status(201).json({
       ok: true,
-      data: {
-        id: result.rows[0].id,
-        slug
-      },
+      data: { id: result.rows[0].id, slug: req.body.slug },
       timestamp: new Date().toISOString()
     });
   } catch (e) {

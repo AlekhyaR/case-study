@@ -38,6 +38,7 @@ app.get('/health', healthCheck);
 
 // Stats
 let requestCount = 0;
+app.use((req, res, next) => { requestCount++; next(); });
 app.get('/stats', require('./middleware/auth').authenticateToken, (req, res) => {
   res.json({
     ok: true,

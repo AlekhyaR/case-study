@@ -69,32 +69,34 @@ async function createTemplate(id, title, source, order_index, categories) {
 }
 
 async function updateTemplate(id, updates) {
-  let query = 'UPDATE templates SET ';
-  let values = [];
+  const setClauses = [];
+  const values = [];
   let paramCount = 1;
 
   if (updates.title !== undefined) {
-    query += `title = $${paramCount}, `;
+    setClauses.push(`title = $${paramCount++}`);
     values.push(updates.title);
-    paramCount++;
   }
-
   if (updates.source !== undefined) {
-    query += `source = $${paramCount}, `;
+    setClauses.push(`source = $${paramCount++}`);
     values.push(JSON.stringify(updates.source));
-    paramCount++;
   }
-
   if (updates.order_index !== undefined) {
-    query += `order_index = $${paramCount}, `;
+    setClauses.push(`order_index = $${paramCount++}`);
     values.push(updates.order_index);
-    paramCount++;
   }
 
-  query += `updated_at = now() WHERE id = $${paramCount}`;
+  if (setClauses.length === 0) return { rowCount: 0 };
+
+  setClauses.push('updated_at = now()');
   values.push(id);
 
-  return queryWithRetry(() => client.query(query, values));
+  return queryWithRetry(() =>
+    client.query(
+      `UPDATE templates SET ${setClauses.join(', ')} WHERE id = $${paramCount}`,
+      values
+    )
+  );
 }
 
 async function deleteTemplate(id) {
