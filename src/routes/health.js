@@ -1,6 +1,6 @@
-// src/routes/health.js
 const { dbConnected, testConnection } = require('../config/database');
 const { handleError } = require('../utils/error');
+const { success } = require('../utils/response');
 
 async function healthCheck(req, res) {
   try {
@@ -12,17 +12,9 @@ async function healthCheck(req, res) {
         timestamp: new Date().toISOString()
       });
     }
-    
-    const result = await testConnection();
-    
-    res.status(200).json({
-      ok: true,
-      data: {
-        status: 'healthy',
-        database: { connected: result }
-      },
-      timestamp: new Date().toISOString()
-    });
+
+    const connected = await testConnection();
+    res.json(success({ status: 'healthy', database: { connected } }));
   } catch (e) {
     handleError('/health', e, res);
   }

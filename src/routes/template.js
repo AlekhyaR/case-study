@@ -4,6 +4,7 @@ const router = express.Router();
 const templateService = require('../services/templateService');
 const { authenticateToken } = require('../middleware/auth');
 const { handleError } = require('../utils/error');
+const { success, paginated } = require('../utils/response');
 const { isCacheValid, getCache, setCache, invalidateCache } = require('../services/cacheService');
 const { validateBody, validateQuery } = require('../validation/validate');
 const {
@@ -11,14 +12,19 @@ const {
   PaginationSchema,
   CreateTemplateBodySchema,
   UpdateTemplateBodySchema,
-  SearchQuerySchema
+  SearchQuerySchema,
+  TemplateRowSchema
 } = require('../validation/schemas');
 
 const DEFAULT_LIMIT = 50;
 
 function mapTemplate(row) {
-  const { total_count, ...template } = row;
-  return { ...template, categories: template.categories || [] };
+  const { total_count, categories, ...rest } = TemplateRowSchema.parse(row);
+  return { ...rest, categories: categories ?? [] };
+}
+
+function buildPagination(page, limit, total) {
+  return { page, limit, total, totalPages: Math.ceil(total / limit) };
 }
 
 // GET all templates
@@ -30,12 +36,7 @@ router.get('/get-templates', authenticateToken, validateQuery(PaginationSchema),
 
     if (useCache && isCacheValid()) {
       const cached = getCache();
-      return res.json({
-        ok: true,
-        data: cached.data,
-        pagination: { page, limit, total: cached.total, totalPages: Math.ceil(cached.total / limit) },
-        timestamp: new Date().toISOString()
-      });
+      return res.json(paginated(cached.data, buildPagination(page, limit, cached.total)));
     }
 
     const result = await templateService.getAllTemplates(limit, offset);
@@ -44,12 +45,7 @@ router.get('/get-templates', authenticateToken, validateQuery(PaginationSchema),
 
     if (useCache) setCache({ data, total });
 
-    res.json({
-      ok: true,
-      data,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-      timestamp: new Date().toISOString()
-    });
+    res.json(paginated(data, buildPagination(page, limit, total)));
   } catch (e) {
     handleError('/get-templates', e, res);
   }
@@ -64,15 +60,12 @@ router.get('/get-template', authenticateToken, validateQuery(IdQuerySchema), asy
       return res.status(404).json({
         ok: false,
         error: 'Template not found',
+        type: 'NOT_FOUND',
         timestamp: new Date().toISOString()
       });
     }
 
-    res.json({
-      ok: true,
-      data: mapTemplate(result.rows[0]),
-      timestamp: new Date().toISOString()
-    });
+    res.json(success(mapTemplate(result.rows[0])));
   } catch (e) {
     handleError('/get-template', e, res);
   }
@@ -84,11 +77,7 @@ router.post('/create-template', authenticateToken, validateBody(CreateTemplateBo
     const { id, title, source, order_index, categories } = req.body;
     await templateService.createTemplate(id, title, source, order_index, categories);
     invalidateCache();
-    res.status(201).json({
-      ok: true,
-      data: { id },
-      timestamp: new Date().toISOString()
-    });
+    res.status(201).json(success({ id }));
   } catch (e) {
     handleError('/create-template', e, res);
   }
@@ -100,11 +89,7 @@ router.post('/update-template', authenticateToken, validateBody(UpdateTemplateBo
     const { id, ...updates } = req.body;
     const result = await templateService.updateTemplate(id, updates);
     invalidateCache();
-    res.json({
-      ok: true,
-      data: { updated: result.rowCount > 0 },
-      timestamp: new Date().toISOString()
-    });
+    res.json(success({ updated: result.rowCount > 0 }));
   } catch (e) {
     handleError('/update-template', e, res);
   }
@@ -115,11 +100,7 @@ router.delete('/delete-template', authenticateToken, validateQuery(IdQuerySchema
   try {
     const result = await templateService.deleteTemplate(req.query.id);
     invalidateCache();
-    res.json({
-      ok: true,
-      data: { deleted: result.rowCount, id: req.query.id },
-      timestamp: new Date().toISOString()
-    });
+    res.json(success({ deleted: result.rowCount, id: req.query.id }));
   } catch (e) {
     handleError('/delete-template', e, res);
   }
@@ -130,17 +111,10 @@ router.get('/search-templates', authenticateToken, validateQuery(SearchQuerySche
   try {
     const { q, page, limit } = req.query;
     const offset = (page - 1) * limit;
-
     const result = await templateService.searchTemplates(q, limit, offset);
     const total = parseInt(result.rows[0]?.total_count || 0, 10);
     const data = result.rows.map(mapTemplate);
-
-    res.json({
-      ok: true,
-      data,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
-      timestamp: new Date().toISOString()
-    });
+    res.json(paginated(data, buildPagination(page, limit, total)));
   } catch (e) {
     handleError('/search-templates', e, res);
   }
