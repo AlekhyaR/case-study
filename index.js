@@ -44,18 +44,35 @@ var server = http.createServer(app);
 
 var requestCount = 0;
 
-var templatesCache = null;
-var templatesCacheLoadedAt = null;
-var lastTemplatesResult = null;
+// ✅ FIXED: Proper cache management with TTL and invalidation
+var cache = {
+  templates: null,
+  expiresAt: null,
+  TTL: 5 * 60 * 1000  // 5 minutes in milliseconds
+};
+
+function isCacheValid() {
+  return cache.templates !== null && Date.now() < cache.expiresAt;
+}
+
+function setCacheValid() {
+  cache.expiresAt = Date.now() + cache.TTL;
+}
+
+function invalidateCache() {
+  cache.templates = null;
+  cache.expiresAt = null;
+}
 
 // ✅ FIXED: N+1 Query Problem - Single query with JSON aggregation
 app.get('/get-templates', async function(req, res) {
   requestCount++;
   try {
-    if (templatesCache) {
-      lastTemplatesResult = templatesCache;
-      return res.json(templatesCache);
+    // Check if cache is valid (not expired)
+    if (isCacheValid()) {
+      return res.json(cache.templates);
     }
+    // Cache expired or doesn't exist, fetch fresh data
 
     // ✅ Single query: Get templates with categories in one go
     var result = await client.query(`
@@ -80,7 +97,8 @@ app.get('/get-templates', async function(req, res) {
       categories: row.categories || []
     }));
 
-    templatesCache = mappedResult;
+    cache.templates = mappedResult;
+    setCacheValid();
     templatesCacheLoadedAt = Date.now();
     lastTemplatesResult = mappedResult;
     res.json(mappedResult);
@@ -171,12 +189,16 @@ app.post('/create-template', async function(req, res) {
       }
     }
     
-    res.json({ ok: true, id: id });
+    // ✅ IMMEDIATELY invalidate cache - new data created
+    invalidateCache();
+    
+    res.status(201).json({ ok: true, id: id });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
+// ✅ FIXED: Input validation + Cache invalidation on update
 app.post('/update-template', async function(req, res) {
   requestCount++;
   var updates = req.body;
@@ -215,11 +237,17 @@ app.post('/update-template', async function(req, res) {
     values.push(templateId);
     
     var result = await client.query(query, values);
+
+    // ✅ IMMEDIATELY invalidate cache - data was modified
+    invalidateCache();
+
     res.json({ ok: true, updated: result.rowCount > 0 });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+// ✅ FIXED: Input validation + Cache invalidation on delete
 
 app.delete('/delete-template', async function(req, res) {
   requestCount++;
@@ -229,6 +257,9 @@ app.delete('/delete-template', async function(req, res) {
   }
   try {
     var result = await client.query('DELETE FROM templates WHERE id = $1', [templateId]);
+    // ✅ IMMEDIATELY invalidate cache - data was deleted
+    invalidateCache();
+
     res.json({ ok: true, deleted: result.rowCount, id: templateId });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -245,6 +276,7 @@ app.get('/get-template-categories', async function(req, res) {
   }
 });
 
+// ✅ FIXED: Input validation + Cache invalidation on category create
 app.post('/create-template-category', async function(req, res) {
   requestCount++;
   var slug = req.body.slug;
@@ -253,19 +285,22 @@ app.post('/create-template-category', async function(req, res) {
   }
   try {
     var result = await client.query('INSERT INTO categories (slug) VALUES ($1) RETURNING id', [slug]);
-    res.json({ ok: true, id: result.rows[0].id, slug: slug });
+    // ✅ IMMEDIATELY invalidate cache - categories changed, templates affected
+    invalidateCache();
+    res.status(201).json({ ok: true, id: result.rows[0].id, slug: slug });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-// ✅ FIXED: N+1 Query Problem - Single query with JSON aggregation
+// ✅ FIXED: N+1 Query Problem - Single query with JSON aggregation + Cache Invalidation
 app.get('/search-templates', async function(req, res) {
   requestCount++;
   var searchTerm = req.query.q || '';
   try {
-    if (lastTemplatesResult && !searchTerm) {
-      return res.json(lastTemplatesResult);
+    // Only return cached result if cache is valid AND no search term
+    if (isCacheValid() && !searchTerm) {
+      return res.json(cache.templates);
     }
 
     // ✅ Single query: Search templates with categories in one go
@@ -292,8 +327,13 @@ app.get('/search-templates', async function(req, res) {
       categories: row.categories || []
     }));
  
-    lastTemplatesResult = mappedResult;
-    templatesCache = mappedResult;
+    
+    // If no search term, cache the result
+    if (!searchTerm) {
+      cache.templates = mappedResult;
+      setCacheValid();
+    }
+
     res.json(mappedResult);
     } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
