@@ -261,8 +261,34 @@ app.get('/stats', function(req, res) {
   res.json({ requests: requestCount });
 });
 
-app.get('/health', function(req, res) {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', async function(req, res) {
+  try {
+    // ✅ Actually test database connection
+    const result = await client.query('SELECT NOW()');
+    
+    res.status(200).json({
+      ok: true,
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      database: {
+        connected: true,
+        checked: result.rows[0].now
+      }
+    });
+  } catch (e) {
+    // ✅ Return 503 Service Unavailable
+    console.error('❌ Health check failed:', e.message);
+    
+    res.status(503).json({
+      ok: false,
+      status: 'unhealthy',
+      timestamp: new Date().toISOString(),
+      database: {
+        connected: false,
+        error: e.message
+      }
+    });
+  }
 });
 
 server.listen(port);
