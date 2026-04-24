@@ -89,9 +89,9 @@ var client = new Pool({
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
-  max: 20,                          // ✅ Connection pool size
-  idleTimeoutMillis: 30000,         // ✅ Idle timeout
-  connectionTimeoutMillis: 5000,    // ✅ Connection timeout
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
 });
 
 // ✅ Handle connection pool errors
@@ -128,7 +128,7 @@ var requestCount = 0;
 var cache = {
   templates: null,
   expiresAt: null,
-  TTL: 5 * 60 * 1000  // 5 minutes in milliseconds
+  TTL: 5 * 60 * 1000
 };
 
 function isCacheValid() {
@@ -144,25 +144,27 @@ function invalidateCache() {
   cache.expiresAt = null;
 }
 
-// ✅ FIXED: N+1 Query Problem - Single query + Error handling + Retry
+// ✅ FIXED: Standardized response format for all endpoints
 app.get('/get-templates', async function(req, res) {
   requestCount++;
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
-    // Check if cache is valid (not expired)
     if (isCacheValid()) {
-      return res.json(cache.templates);
+      return res.json({
+        ok: true,
+        data: cache.templates,
+        timestamp: new Date().toISOString()
+      });
     }
 
-    // ✅ Single query with retry: Get templates with categories in one go
     var result = await queryWithRetry(() =>
       client.query(`
         SELECT 
@@ -181,7 +183,6 @@ app.get('/get-templates', async function(req, res) {
       `)
     );
 
-    // Map to ensure categories is always an array
     var mappedResult = result.rows.map(row => ({
       ...row,
       categories: row.categories || []
@@ -189,38 +190,46 @@ app.get('/get-templates', async function(req, res) {
 
     cache.templates = mappedResult;
     setCacheValid();
-    res.json(mappedResult);
+    
+    res.json({
+      ok: true,
+      data: mappedResult,
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /get-templates:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: N+1 Query Problem - Single query + Error handling + Retry
+// ✅ FIXED: Standardized response format
 app.get('/get-template', async function(req, res) {
   requestCount++;
   var templateId = parseInt(req.query.id, 10);
   if (!Number.isInteger(templateId) || templateId <= 0) {
-    return res.status(400).json({ ok: false, error: 'Invalid id' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'Invalid id',
+      timestamp: new Date().toISOString()
+    });
   }
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
-    // ✅ Single query with retry: Get template with categories in one go
     var result = await queryWithRetry(() =>
       client.query(`
         SELECT 
@@ -243,7 +252,7 @@ app.get('/get-template', async function(req, res) {
       var template = result.rows[0];
       res.json({
         ok: true,
-        template: {
+        data: {
           id: template.id,
           title: template.title,
           source: template.source,
@@ -251,52 +260,72 @@ app.get('/get-template', async function(req, res) {
           created_at: template.created_at,
           updated_at: template.updated_at,
           categories: template.categories || []
-        }
+        },
+        timestamp: new Date().toISOString()
       });
     } else {
-      res.status(404).json({ ok: false, error: 'Template not found' });
+      res.status(404).json({ 
+        ok: false, 
+        error: 'Template not found',
+        timestamp: new Date().toISOString()
+      });
     }
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /get-template:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Input validation + Error handling + Retry + Cache invalidation
+// ✅ FIXED: Standardized response format
 app.post('/create-template', async function(req, res) {
   requestCount++;
   var data = req.body;
   var id = parseInt(data.id, 10);
   if (!Number.isInteger(id) || id <= 0) {
-    return res.status(400).json({ ok: false, error: 'id must be a positive integer' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'id must be a positive integer',
+      timestamp: new Date().toISOString()
+    });
   }
   if (!data.title || typeof data.title !== 'string' || !data.title.trim()) {
-    return res.status(400).json({ ok: false, error: 'title must be a non-empty string' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'title must be a non-empty string',
+      timestamp: new Date().toISOString()
+    });
   }
   if (data.source === undefined || data.source === null) {
-    return res.status(400).json({ ok: false, error: 'source is required' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'source is required',
+      timestamp: new Date().toISOString()
+    });
   }
   if (data.order_index !== undefined && (!Number.isInteger(Number(data.order_index)) || isNaN(Number(data.order_index)))) {
-    return res.status(400).json({ ok: false, error: 'order_index must be an integer' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'order_index must be an integer',
+      timestamp: new Date().toISOString()
+    });
   }
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
-    // ✅ Use retry logic
     var insertResult = await queryWithRetry(() =>
       client.query(
         'INSERT INTO templates (id, title, source, order_index) VALUES ($1, $2, $3, $4)',
@@ -321,44 +350,59 @@ app.post('/create-template', async function(req, res) {
       }
     }
     
-    // ✅ IMMEDIATELY invalidate cache - new data created
     invalidateCache();
     
-    res.status(201).json({ ok: true, id: id });
+    res.status(201).json({ 
+      ok: true, 
+      data: { id: id },
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /create-template:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Input validation + Error handling + Retry + Cache invalidation
+// ✅ FIXED: Standardized response format
 app.post('/update-template', async function(req, res) {
   requestCount++;
   var updates = req.body;
   var templateId = parseInt(updates.id, 10);
   if (!Number.isInteger(templateId) || templateId <= 0) {
-    return res.status(400).json({ ok: false, error: 'id must be a positive integer' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'id must be a positive integer',
+      timestamp: new Date().toISOString()
+    });
   }
   if (updates.title !== undefined && (typeof updates.title !== 'string' || !updates.title.trim())) {
-    return res.status(400).json({ ok: false, error: 'title must be a non-empty string' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'title must be a non-empty string',
+      timestamp: new Date().toISOString()
+    });
   }
   if (updates.order_index !== undefined && (!Number.isInteger(Number(updates.order_index)) || isNaN(Number(updates.order_index)))) {
-    return res.status(400).json({ ok: false, error: 'order_index must be an integer' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'order_index must be an integer',
+      timestamp: new Date().toISOString()
+    });
   }
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
@@ -385,156 +429,177 @@ app.post('/update-template', async function(req, res) {
     query += `updated_at = now() WHERE id = $${paramCount}`;
     values.push(templateId);
     
-    // ✅ Use retry logic
     var result = await queryWithRetry(() =>
       client.query(query, values)
     );
 
-    // ✅ IMMEDIATELY invalidate cache - data was modified
     invalidateCache();
 
-    res.json({ ok: true, updated: result.rowCount > 0 });
+    res.json({ 
+      ok: true, 
+      data: { updated: result.rowCount > 0 },
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /update-template:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Input validation + Error handling + Retry + Cache invalidation
+// ✅ FIXED: Standardized response format
 app.delete('/delete-template', async function(req, res) {
   requestCount++;
   var templateId = parseInt(req.query.id, 10);
   if (!Number.isInteger(templateId) || templateId <= 0) {
-    return res.status(400).json({ ok: false, error: 'Invalid id' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'Invalid id',
+      timestamp: new Date().toISOString()
+    });
   }
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
-    // ✅ Use retry logic
     var result = await queryWithRetry(() =>
       client.query('DELETE FROM templates WHERE id = $1', [templateId])
     );
     
-    // ✅ IMMEDIATELY invalidate cache - data was deleted
     invalidateCache();
 
-    res.json({ ok: true, deleted: result.rowCount, id: templateId });
+    res.json({ 
+      ok: true, 
+      data: { deleted: result.rowCount, id: templateId },
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /delete-template:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Error handling + Retry
+// ✅ FIXED: Standardized response format
 app.get('/get-template-categories', async function(req, res) {
   requestCount++;
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
     var categories = await queryWithRetry(() =>
       client.query('SELECT id, slug FROM categories ORDER BY id ASC')
     );
-    res.json(categories.rows);
+    
+    res.json({
+      ok: true,
+      data: categories.rows,
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /get-template-categories:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Input validation + Error handling + Retry + Cache invalidation
+// ✅ FIXED: Standardized response format
 app.post('/create-template-category', async function(req, res) {
   requestCount++;
   var slug = req.body.slug;
   if (!slug || typeof slug !== 'string' || !/^[a-z0-9-]+$/.test(slug)) {
-    return res.status(400).json({ ok: false, error: 'slug must be a non-empty lowercase alphanumeric string (hyphens allowed)' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: 'slug must be a non-empty lowercase alphanumeric string (hyphens allowed)',
+      timestamp: new Date().toISOString()
+    });
   }
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
-    // ✅ Use retry logic
     var result = await queryWithRetry(() =>
       client.query('INSERT INTO categories (slug) VALUES ($1) RETURNING id', [slug])
     );
     
-    // ✅ IMMEDIATELY invalidate cache - categories changed, templates affected
     invalidateCache();
     
-    res.status(201).json({ ok: true, id: result.rows[0].id, slug: slug });
+    res.status(201).json({ 
+      ok: true, 
+      data: { id: result.rows[0].id, slug: slug },
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /create-template-category:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: N+1 Query Problem - Single query + Error handling + Retry + Cache
+// ✅ FIXED: Standardized response format
 app.get('/search-templates', async function(req, res) {
   requestCount++;
   var searchTerm = req.query.q || '';
   try {
-    // Check if database is connected
     if (!dbConnected) {
       return res.status(503).json({ 
         ok: false, 
         error: 'Database unavailable',
-        type: 'SERVICE_UNAVAILABLE'
+        type: 'SERVICE_UNAVAILABLE',
+        timestamp: new Date().toISOString()
       });
     }
 
-    // Only return cached result if cache is valid AND no search term
     if (isCacheValid() && !searchTerm) {
-      return res.json(cache.templates);
+      return res.json({
+        ok: true,
+        data: cache.templates,
+        timestamp: new Date().toISOString()
+      });
     }
 
-    // ✅ Single query with retry: Search templates with categories in one go
     var result = await queryWithRetry(() =>
       client.query(`
         SELECT 
@@ -554,66 +619,75 @@ app.get('/search-templates', async function(req, res) {
       `, [searchTerm])
     );
 
-    // Map to ensure categories is always an array
     var mappedResult = result.rows.map(row => ({
       ...row,
       categories: row.categories || []
     }));
  
-    // If no search term, cache the result
     if (!searchTerm) {
       cache.templates = mappedResult;
       setCacheValid();
     }
 
-    res.json(mappedResult);
+    res.json({
+      ok: true,
+      data: mappedResult,
+      timestamp: new Date().toISOString()
+    });
   } catch (e) {
-    // ✅ Classify error and return appropriate status
     const { status, type } = classifyDatabaseError(e);
     console.error(`[${type}] Error in /search-templates:`, e.message);
     
     res.status(status).json({ 
       ok: false, 
       error: e.message,
-      type: type
+      type: type,
+      timestamp: new Date().toISOString()
     });
   }
 });
 
 app.get('/stats', function(req, res) {
-  res.json({ requests: requestCount });
+  res.json({ 
+    ok: true,
+    data: { requests: requestCount },
+    timestamp: new Date().toISOString()
+  });
 });
 
-// ✅ FIXED: Health check that actually tests database with retry
+// ✅ FIXED: Standardized response format
 app.get('/health', async function(req, res) {
   try {
-    // ✅ Actually test database connection with retry
     const result = await queryWithRetry(() =>
       client.query('SELECT NOW()')
     );
     
     res.status(200).json({
       ok: true,
-      status: 'healthy',
-      timestamp: new Date().toISOString(),
-      database: {
-        connected: true,
-        checked: result.rows[0].now
-      }
+      data: {
+        status: 'healthy',
+        database: {
+          connected: true,
+          checked: result.rows[0].now
+        }
+      },
+      timestamp: new Date().toISOString()
     });
   } catch (e) {
-    // ✅ Return correct status code if database down
     const { status } = classifyDatabaseError(e);
     console.error('❌ Health check failed:', e.message);
     
     res.status(status).json({
       ok: false,
-      status: 'unhealthy',
-      timestamp: new Date().toISOString(),
-      database: {
-        connected: false,
-        error: e.message
-      }
+      error: 'Health check failed',
+      data: {
+        status: 'unhealthy',
+        database: {
+          connected: false,
+          error: e.message
+        }
+      },
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -626,7 +700,6 @@ function gracefulShutdown() {
     console.log('✅ HTTP server closed');
     
     try {
-      // ✅ Close database connection properly
       await client.end();
       console.log('✅ Database connection closed');
     } catch (err) {
@@ -636,7 +709,6 @@ function gracefulShutdown() {
     process.exit(0);
   });
   
-  // ✅ Force shutdown after 10 seconds
   setTimeout(() => {
     console.error('❌ Forced shutdown after timeout');
     process.exit(1);
@@ -650,7 +722,6 @@ server.listen(port);
 server.on('error', onError);
 server.on('listening', onListening);
 
-// ✅ Test database connection on startup
 testDatabaseConnection().then(connected => {
   if (!connected) {
     console.error('❌ Cannot start without database connection');
