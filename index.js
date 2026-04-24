@@ -30,7 +30,6 @@ async function queryWithRetry(queryFn, maxAttempts = 3, delayMs = 100) {
     try {
       return await queryFn();
     } catch (err) {
-      // ✅ Only retry on transient errors
       const isTransient = err.message?.includes('timeout') || 
                          err.code === 'ECONNREFUSED' ||
                          err.code === 'ENOTFOUND';
@@ -39,7 +38,6 @@ async function queryWithRetry(queryFn, maxAttempts = 3, delayMs = 100) {
         throw err;
       }
       
-      // ✅ Exponential backoff
       const waitTime = delayMs * Math.pow(2, attempt - 1);
       console.log(`Retry attempt ${attempt}/${maxAttempts}, waiting ${waitTime}ms`);
       await new Promise(r => setTimeout(r, waitTime));
@@ -52,34 +50,56 @@ function classifyDatabaseError(err) {
   const message = err.message?.toLowerCase() || '';
   const code = err.code;
   
-  // Connection errors → 503 Service Unavailable
   if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || 
       message.includes('could not connect')) {
     return { status: 503, type: 'CONNECTION' };
   }
   
-  // Timeout errors → 504 Gateway Timeout
   if (message.includes('timeout') || code === 'QUERY_TIMEOUT') {
     return { status: 504, type: 'TIMEOUT' };
   }
   
-  // Permission errors → 403 Forbidden
   if (message.includes('permission denied') || code === '42501') {
     return { status: 403, type: 'PERMISSION' };
   }
   
-  // Not found errors → 400 Bad Request
   if (message.includes('does not exist') || code === '42P01') {
     return { status: 400, type: 'NOT_FOUND' };
   }
   
-  // Duplicate key errors → 409 Conflict
   if (message.includes('duplicate') || code === '23505') {
     return { status: 409, type: 'CONFLICT' };
   }
   
-  // Default → 500 Internal Server Error
   return { status: 500, type: 'UNKNOWN' };
+}
+
+// ✅ SECURITY: Sanitize error messages for clients
+function sanitizeErrorMessage(err, errorType) {
+  const genericMessages = {
+    'CONNECTION': 'Database is currently unavailable. Please try again later.',
+    'TIMEOUT': 'Request took too long. Please try again.',
+    'PERMISSION': 'You do not have permission to perform this action.',
+    'NOT_FOUND': 'The requested resource was not found.',
+    'CONFLICT': 'The resource already exists.',
+    'UNKNOWN': 'An error occurred. Please try again.'
+  };
+  
+  return genericMessages[errorType] || genericMessages['UNKNOWN'];
+}
+
+// ✅ SECURITY: Log full error details server-side only
+function logErrorDetails(err, context) {
+  const errorId = `ERR_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  console.error(`[${errorId}] ${context}`, {
+    message: err.message,
+    code: err.code,
+    stack: err.stack,
+    timestamp: new Date().toISOString()
+  });
+  
+  return errorId;
 }
 
 // ✅ FIXED: Database pool with proper configuration
@@ -144,7 +164,7 @@ function invalidateCache() {
   cache.expiresAt = null;
 }
 
-// ✅ FIXED: Standardized response format for all endpoints
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.get('/get-templates', async function(req, res) {
   requestCount++;
   try {
@@ -198,25 +218,27 @@ app.get('/get-templates', async function(req, res) {
     });
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /get-templates:`, e.message);
+    const errorId = logErrorDetails(e, '/get-templates');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.get('/get-template', async function(req, res) {
   requestCount++;
   var templateId = parseInt(req.query.id, 10);
   if (!Number.isInteger(templateId) || templateId <= 0) {
     return res.status(400).json({ 
       ok: false, 
-      error: 'Invalid id',
+      error: 'id must be a positive integer',
       timestamp: new Date().toISOString()
     });
   }
@@ -272,18 +294,20 @@ app.get('/get-template', async function(req, res) {
     }
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /get-template:`, e.message);
+    const errorId = logErrorDetails(e, '/get-template');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.post('/create-template', async function(req, res) {
   requestCount++;
   var data = req.body;
@@ -359,18 +383,20 @@ app.post('/create-template', async function(req, res) {
     });
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /create-template:`, e.message);
+    const errorId = logErrorDetails(e, '/create-template');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.post('/update-template', async function(req, res) {
   requestCount++;
   var updates = req.body;
@@ -442,18 +468,20 @@ app.post('/update-template', async function(req, res) {
     });
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /update-template:`, e.message);
+    const errorId = logErrorDetails(e, '/update-template');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.delete('/delete-template', async function(req, res) {
   requestCount++;
   var templateId = parseInt(req.query.id, 10);
@@ -487,18 +515,20 @@ app.delete('/delete-template', async function(req, res) {
     });
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /delete-template:`, e.message);
+    const errorId = logErrorDetails(e, '/delete-template');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.get('/get-template-categories', async function(req, res) {
   requestCount++;
   try {
@@ -522,18 +552,20 @@ app.get('/get-template-categories', async function(req, res) {
     });
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /get-template-categories:`, e.message);
+    const errorId = logErrorDetails(e, '/get-template-categories');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.post('/create-template-category', async function(req, res) {
   requestCount++;
   var slug = req.body.slug;
@@ -567,18 +599,20 @@ app.post('/create-template-category', async function(req, res) {
     });
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /create-template-category:`, e.message);
+    const errorId = logErrorDetails(e, '/create-template-category');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.get('/search-templates', async function(req, res) {
   requestCount++;
   var searchTerm = req.query.q || '';
@@ -636,12 +670,14 @@ app.get('/search-templates', async function(req, res) {
     });
   } catch (e) {
     const { status, type } = classifyDatabaseError(e);
-    console.error(`[${type}] Error in /search-templates:`, e.message);
+    const errorId = logErrorDetails(e, '/search-templates');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({ 
       ok: false, 
-      error: e.message,
+      error: safeMessage,
       type: type,
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
@@ -655,7 +691,7 @@ app.get('/stats', function(req, res) {
   });
 });
 
-// ✅ FIXED: Standardized response format
+// ✅ FIXED: Standardized response format + Sanitized errors
 app.get('/health', async function(req, res) {
   try {
     const result = await queryWithRetry(() =>
@@ -674,19 +710,20 @@ app.get('/health', async function(req, res) {
       timestamp: new Date().toISOString()
     });
   } catch (e) {
-    const { status } = classifyDatabaseError(e);
-    console.error('❌ Health check failed:', e.message);
+    const { status, type } = classifyDatabaseError(e);
+    const errorId = logErrorDetails(e, '/health');
+    const safeMessage = sanitizeErrorMessage(e, type);
     
     res.status(status).json({
       ok: false,
-      error: 'Health check failed',
+      error: safeMessage,
       data: {
         status: 'unhealthy',
         database: {
-          connected: false,
-          error: e.message
+          connected: false
         }
       },
+      errorId: errorId,
       timestamp: new Date().toISOString()
     });
   }
