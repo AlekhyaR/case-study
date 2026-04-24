@@ -48,6 +48,7 @@ var templatesCache = null;
 var templatesCacheLoadedAt = null;
 var lastTemplatesResult = null;
 
+// ✅ FIXED: N+1 Query Problem - Single query with JSON aggregation
 app.get('/get-templates', async function(req, res) {
   requestCount++;
   try {
@@ -56,27 +57,39 @@ app.get('/get-templates', async function(req, res) {
       return res.json(templatesCache);
     }
 
-    var templates = await client.query(
-      `SELECT t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at,
-              array_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) AS categories
-       FROM templates t
-       LEFT JOIN template_categories tc ON tc.template_id = t.id
-       LEFT JOIN categories c ON c.id = tc.category_id
-       GROUP BY t.id
-       ORDER BY t.order_index ASC`
-    );
-    var result = templates.rows.map(function(row) {
-      return { ...row, categories: row.categories || [] };
-    });
-    templatesCache = result;
+    // ✅ Single query: Get templates with categories in one go
+    var result = await client.query(`
+      SELECT 
+        t.id,
+        t.title,
+        t.source,
+        t.order_index,
+        t.created_at,
+        t.updated_at,
+        json_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) as categories
+      FROM templates t
+      LEFT JOIN template_categories tc ON t.id = tc.template_id
+      LEFT JOIN categories c ON c.id = tc.category_id
+      GROUP BY t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at
+      ORDER BY t.order_index ASC
+    `);
+
+    // Map to ensure categories is always an array
+    var mappedResult = result.rows.map(row => ({
+      ...row,
+      categories: row.categories || []
+    }));
+
+    templatesCache = mappedResult;
     templatesCacheLoadedAt = Date.now();
-    lastTemplatesResult = result;
-    res.json(result);
+    lastTemplatesResult = mappedResult;
+    res.json(mappedResult);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
+// ✅ FIXED: N+1 Query Problem - Single query with JSON aggregation
 app.get('/get-template', async function(req, res) {
   requestCount++;
   var templateId = parseInt(req.query.id, 10);
@@ -84,16 +97,36 @@ app.get('/get-template', async function(req, res) {
     return res.status(400).json({ ok: false, error: 'Invalid id' });
   }
   try {
-    var template = await client.query('SELECT * FROM templates WHERE id = $1', [templateId ]);
-    if (template.rows.length > 0) {
-      var categories = await client.query(
-        'SELECT c.slug FROM template_categories tc JOIN categories c ON c.id = tc.category_id WHERE tc.template_id = $1',
-        [templateId ]
-      );
+    // ✅ Single query: Get template with categories in one go
+    var result = await client.query(`
+      SELECT 
+        t.id,
+        t.title,
+        t.source,
+        t.order_index,
+        t.created_at,
+        t.updated_at,
+        json_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) as categories
+      FROM templates t
+      LEFT JOIN template_categories tc ON t.id = tc.template_id
+      LEFT JOIN categories c ON c.id = tc.category_id
+      WHERE t.id = $1
+      GROUP BY t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at
+    `, [templateId]);
+
+    if (result.rows.length > 0) {
+      var template = result.rows[0];
       res.json({
         ok: true,
-        template: template.rows[0],
-        categorySlugs: categories.rows.map(c => c.slug)
+        template: {
+          id: template.id,
+          title: template.title,
+          source: template.source,
+          order_index: template.order_index,
+          created_at: template.created_at,
+          updated_at: template.updated_at,
+          categories: template.categories || []
+        }
       });
     } else {
       res.status(404).json({ ok: false, error: 'Template not found' });
@@ -226,6 +259,7 @@ app.post('/create-template-category', async function(req, res) {
   }
 });
 
+// ✅ FIXED: N+1 Query Problem - Single query with JSON aggregation
 app.get('/search-templates', async function(req, res) {
   requestCount++;
   var searchTerm = req.query.q || '';
@@ -234,29 +268,37 @@ app.get('/search-templates', async function(req, res) {
       return res.json(lastTemplatesResult);
     }
 
-    var templates = await client.query(
-      `SELECT t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at,
-              array_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) AS categories
-       FROM templates t
-       LEFT JOIN template_categories tc ON tc.template_id = t.id
-       LEFT JOIN categories c ON c.id = tc.category_id
-       WHERE t.title LIKE '%' || $1 || '%' OR t.id::text LIKE '%' || $1 || '%'
-       GROUP BY t.id
-       ORDER BY t.order_index ASC`,
-      [searchTerm]
-    );
-    var result = templates.rows.map(function(row) {
-      return { ...row, categories: row.categories || [] };
-    });
-    
-    lastTemplatesResult = result;
-    templatesCache = result;
-    res.json(result);
-  } catch (e) {
+    // ✅ Single query: Search templates with categories in one go
+    var result = await client.query(`
+      SELECT 
+        t.id,
+        t.title,
+        t.source,
+        t.order_index,
+        t.created_at,
+        t.updated_at,
+        json_agg(c.slug) FILTER (WHERE c.slug IS NOT NULL) as categories
+      FROM templates t
+      LEFT JOIN template_categories tc ON t.id = tc.template_id
+      LEFT JOIN categories c ON c.id = tc.category_id
+      WHERE t.title ILIKE '%' || $1 || '%' OR t.id::TEXT ILIKE '%' || $1 || '%'
+      GROUP BY t.id, t.title, t.source, t.order_index, t.created_at, t.updated_at
+      ORDER BY t.order_index ASC
+    `, [searchTerm]);
+
+    // Map to ensure categories is always an array
+    var mappedResult = result.rows.map(row => ({
+      ...row,
+      categories: row.categories || []
+    }));
+ 
+    lastTemplatesResult = mappedResult;
+    templatesCache = mappedResult;
+    res.json(mappedResult);
+    } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
-
 app.get('/stats', function(req, res) {
   res.json({ requests: requestCount });
 });
