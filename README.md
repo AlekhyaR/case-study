@@ -120,3 +120,9 @@ We want to see how you approach a real-world refactoring task. There's no single
 If you have questions about the requirements or need clarification, please ask! We're here to help.
 
 Good luck!
+
+---
+
+## Documentation
+
+For a full breakdown of the refactored architecture, module map, request lifecycle, caching strategy, and error handling, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
